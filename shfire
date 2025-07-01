@@ -1,33 +1,28 @@
 #!/bin/sh 
 # shellcheck disable=SC2015,SC1090
 authF="${XDG_CACHE_HOME:-$HOME/.cache/}/shfire/authkey"
-authB="${XDG_CACHE_HOME:-$HOME/.cache/}/basefire/authkey" # basefire
 
-## readCH needs echo, printf doesn't work with it, unless I mess with it
-## so the following hack should work for any shell supporting -e
-## that isn't a unix shell I can't make a case for
-  
-case "$(echo -e '\n')" in
-  *-e*)
-    unset e;;
-  *)
-    e="-e";;
-esac
-
-##
-##
-##
-
-death() { rm $rtemp 2>/dev/null; echo $1; exit 1; } # Clean up on death
-auth() {
-  [ -f "./authkey" ] && { . "./authkey"; } || {
-    [ -f "$authF" ] && { . "$authF"; } || {
-      [ -f "$authB" ] && { . "$authB"; }
-    }
-  }
-  [ "$AUTHKEY" ] || { death "AUTHKEY UNSET OR AUTHFILE MISSING... CANNOT CONTINUE.."; }
+_exit() {
+  rm $rtemp 2>/dev/null
 }
 
+trap _exit EXIT
+
+death() {
+  echo "$@"
+  exit 1
+}
+
+auth() {
+  if [ -r ./authkey ]; then
+     . ./authkey
+   elif [ -r "$authF" ]; then
+     . "$authF"
+   elif [ -r "$authB" ]; then
+     . "$authB"
+   fi
+   [ "$AUTHKEY" ] || death "AUTHKEY UNSET OR AUTHFILE MISSING... CANNOT CONTINUE.."
+}
 #
 # ~'s Are used as delimiters, from that reason whenever a delimiter is needed
 # regex will replace ~'s for -'s before using delimiters
@@ -56,16 +51,20 @@ send() {
   IFS=""
   [ "$1" ] || { death "Channel ID not given... FALLING BACK..." ; }
   [ ! "$(wc -m < $postemp)" -gt "2000" ] || { death "MESSAGE LONGER THEN 2000 CHARS... FALLING BACK"; } # Handle max lenght
-  curl -sX "POST" -H "Authorization: $AUTHKEY" -H "User-Agent: $UA" -L "https://discord.com/api/v6/channels/$1/messages" -d content="$(cat $postemp)" >/dev/null
+  curl -sX "POST" -H "Authorization: $AUTHKEY" -H "User-Agent: $UA" -L "https://discord.com/api/v6/channels/$1/messages" --data-urlencode "content@${postemp}" >/dev/null
   rm $postemp
 }
 readCH() {
   [ "$1" ] || { death "Channel ID not given... FALLING BACK..." ; }
   Rlimit "curl -sX GET" "Authorization: $AUTHKEY" "User-Agent: $UA" "https://discord.com/api/v6/channels/$1/messages"
-  IFS=""; echo ${e} $(cat $rtemp | {
-    [ "$2" ] || { jq '.[] | .author.username+": ",.content' -r; } &&  { jq '.[] | .author.id+"DIL",.content' -r; } 
-  }| sed -e '/^$/d' -e 's/~/-/g' ) | tr '\n' '~' | sed -e 's/DIL~/DIL /g' -e 's/~/\n/g' 
-  # echo -e is needed when using bash
+  IFS=""; printf '%b\n' "$(
+  cat $rtemp | {
+  if [ "$2" ]; then
+    jq '.[] | .author.id+"DIL",.content' -r
+  else
+    jq '.[] | .author.username+": ",.content' -r
+  fi
+})" | tr '\n' '~' | sed -e 's/DIL~/DIL /g' -e 's/~/\n/g'
 }
 listG() {
   #ui="$(echo -ne $'\355')"
@@ -106,8 +105,8 @@ Usage:
 ###
 EOF
 }
-auth; [ $(echo $AUTHKEY | cut -d' ' -f1 ) = "Bot" ] && { export UA="DiscordBot (SHFIRE)"; } || { export UA="Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0"; }
-case $(basename $0) in
+auth; [ $(printf '%s\n' "$AUTHKEY" | cut -d' ' -f1 ) = "Bot" ] && { export UA="DiscordBot (SHFIRE)"; } || { export UA="Mozilla/5.0 (X11; Linux x86_64; rv:139.0) Gecko/20100101 Firefox/139.0"; }
+case "$(basename "$0")" in
   shfire)
     usage; exit 1
   ;;
@@ -121,12 +120,12 @@ case $(basename $0) in
     readCH "$@"
   ;;
   list|CH|DM)
-    [ "$1" = "CH" -o "$(basename $0)" = "CH" ] && {
+    [ "$1" = "CH" -o "$(basename "$0")" = "CH" ] && {
       echo "Getting Channels.."
       listCH "${2:-$1}"
       exit 0
     }
-    [ "$1" = "DM" -o "$(basename $0)" = "DM" ] && {
+    [ "$1" = "DM" -o "$(basename "$0")" = "DM" ] && {
       echo "Getting DMs..."
       listDM
       exit 0
@@ -134,4 +133,4 @@ case $(basename $0) in
     echo "Getting Guilds..." 
     listG
   ;;
-esac; [ $rtemp ] 2>/dev/null && { rm $rtemp; } 
+esac; [ "$rtemp" ] 2>/dev/null && { rm "$rtemp"; } 
