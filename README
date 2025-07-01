@@ -1,8 +1,8 @@
 -------------------
 Status: 
-  This no longer works ...
-  I beliieve this is beause the api version has changed
-  I have no plans to fix this as I don't use Discord anymore
+  This works fine as of recent testing in 2025 ...
+  One day the system for ./read should be reworked to have newest messages at the bottom
+  But idc...
 -------------------
 SHfire: Extremely basic Discord client using HTTP polling without a gateway
 -------------------
@@ -18,4 +18,6 @@ SHfire: Extremely basic Discord client using HTTP polling without a gateway
   7. with AUTHKEY= and then your token
     IE: AUTHKEY=XXXxXXXXXXX.xXXXXXXXX.XXXXXXXXXXXXXXXXXxxXxX
   8. Run ./shfire for usage
+-------------------
+sponsored by the trans agenda to abolish all borders
 -------------------
