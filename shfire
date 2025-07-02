@@ -3,7 +3,7 @@
 authF="${XDG_CACHE_HOME:-$HOME/.cache/}/shfire/authkey"
 
 _exit() {
-  rm $rtemp 2>/dev/null
+  rm "$rtemp" 2>/dev/null
 }
 
 trap _exit EXIT
@@ -15,11 +15,10 @@ death() {
 
 auth() {
   if [ -r ./authkey ]; then
+     # shellcheck disable=SC1091
      . ./authkey
    elif [ -r "$authF" ]; then
      . "$authF"
-   elif [ -r "$authB" ]; then
-     . "$authB"
    fi
    [ "$AUTHKEY" ] || death "AUTHKEY UNSET OR AUTHFILE MISSING... CANNOT CONTINUE.."
 }
@@ -32,68 +31,66 @@ auth() {
 
 ### Ratelimit handler func
 Rlimit() {
-  rtemp=$(mktemp)
-  [ ! $5 ] && { 
-    code=$(${1} -H "$2" -H "$3" -L "$4" -w '%{http_code}' --output $rtemp)
+  rtemp="$(mktemp)"
+  [ ! "$5" ] && { 
+    code=$(${1} -H "$2" -H "$3" -L "$4" -w '%{http_code}' --output "$rtemp")
   }
   while [ "$code" -gt 300 ]; do
-    num=$(jq .retry_after $rtemp); num=${num%[0-9][0-9][0-9]}
+    num=$(jq .retry_after "$rtemp"); num=${num%[0-9][0-9][0-9]}
     sleep ".$num"
-    [ ! $5 ] && {
-      code=$(${1} -H "$2" -H "$3" -L "$4" -w '%{http_code}' --output $rtemp)
+    [ ! "$5" ] && {
+      code=$(${1} -H "$2" -H "$3" -L "$4" -w '%{http_code}' --output "$rtemp")
     }
   done
 }
 
 ###
 send() {
-  postemp=$(mktemp); cat > $postemp
+  postemp=$(mktemp); cat > "$postemp"
   IFS=""
-  [ "$1" ] || { death "Channel ID not given... FALLING BACK..." ; }
-  [ ! "$(wc -m < $postemp)" -gt "2000" ] || { death "MESSAGE LONGER THEN 2000 CHARS... FALLING BACK"; } # Handle max lenght
+  [ "$1" ] || death "Channel ID not given... FALLING BACK..."
+  [ ! "$(wc -m < "$postemp")" -gt "2000" ] || death "MESSAGE LONGER THEN 2000 CHARS... FALLING BACK" # Handle max length
   curl -sX "POST" -H "Authorization: $AUTHKEY" -H "User-Agent: $UA" -L "https://discord.com/api/v6/channels/$1/messages" --data-urlencode "content@${postemp}" >/dev/null
-  rm $postemp
+  rm "$postemp"
 }
 readCH() {
-  [ "$1" ] || { death "Channel ID not given... FALLING BACK..." ; }
+  [ "$1" ] || death "Channel ID not given... FALLING BACK..."
   Rlimit "curl -sX GET" "Authorization: $AUTHKEY" "User-Agent: $UA" "https://discord.com/api/v6/channels/$1/messages"
-  IFS=""; printf '%b\n' "$(
-  cat $rtemp | {
+  IFS=""
   if [ "$2" ]; then
-    jq '.[] | .author.id+"DIL",.content' -r
+    read_output="$(jq '.[] | .author.id+"DIL",.content' -r)"
   else
-    jq '.[] | .author.username+": ",.content' -r
-  fi
-})" | tr '\n' '~' | sed -e 's/DIL~/DIL /g' -e 's/~/\n/g'
+    read_output="$(jq '.[] | .author.username+": ",.content' -r)"
+  fi < "$rtemp"
+  printf '%b\n' "$read_output" | tr '\n' '~' | sed -e 's/DIL~/DIL /g' -e 's/~/\n/g'
 }
 listG() {
   #ui="$(echo -ne $'\355')"
   Rlimit "curl -sX GET" "Authorization: $AUTHKEY" "User-Agent: $UA" "https://discord.com/api/v6/users/@me/guilds"
-  jq '.[] | [.name,.id]' -r $rtemp | sed -E -e 's/~/-/g' -e 's/"//g' -e 's/,/@/g' -e 's/\[//g' -e 's/\]//g' -e '/^$/d' -e 's/^[ \t]*//' | tr '\n' "~" | sed -E -e "s/@~/@/g" | tr '~' '\n'
+  jq -r '.[] | select(.type != 0) | "\(.name)@\(.id)"' "$rtemp" | tr '~\n' "-~" | sed -E -e "s/@~/@/g" | tr '~' '\n'
 }
 listCH() {
-  [ $1 ] || { death "Guild ID not given... FALLING BACK..."; }
+  [ "$1" ] || death "Guild ID not given... FALLING BACK..."
   Rlimit "curl -sX GET" "Authorization: $AUTHKEY" "User-Agent: $UA" "https://discord.com/api/v6/guilds/$1/channels" 
-  jq '.[] | [ if .type == 0 then .name,.id else "GROUPoVC" end ]' $rtemp | sed -E -e '/GROUPoVC/d' -e 's/~/-/g' -e 's/"//g' -e 's/,/@/g' -e 's/\[//g' -e 's/\]//g' -e '/^$/d' -e 's/^[ \t]*//' | tr '\n' "~" | sed -E -e "s/@~/@/g" | tr '~' '\n'
+  jq -r '.[] | select(.type == 0) | "\(.name)@\(.id)"' "$rtemp" | tr '~\n' "-~" | sed -E -e "s/@~/@/g" | tr '~' '\n' 
   # != type 0 means a group or vc which are useless to shfire and only annoying
 }
 listDM() {
   Rlimit "curl -sX GET" "Authorization: $AUTHKEY" "User-Agent: $UA" "https://discord.com/api/v6/users/@me/channels"
-  jq '.[] | [ if .type != 3 then .recipients[].username,.id else "TYPE 3" end]' $rtemp | sed -E -e 's/~/-/g' -e 's/"//g' -e 's/,/@/g' -e 's/\[//g' -e 's/\]//g' -e '/^$/d' -e 's/^[ \t]*//' -e '/TYPE 3/d' | tr '\n' "~" | sed -E -e "s/@~/@/g" | tr '~' '\n'
+  jq -r '.[] | select(.type != 3) | [.recipients[].username,.id] | join("@")' "$rtemp" | tr '~\n' "-~" | sed -E -e "s/@~/@/g" | tr '~' '\n'
   # TYPE 3 # Group DMs are not supported and will not be...
-  # this regex just discrads them, since it would take extra sed -E + tr to manage them
+  # this regex just discards them, since it would take extra sed -E + tr to manage them
 }
 usage() {
-  [ $BASH ] && {
-    printf "SHfire works better with a POSIX shell linked to /bin/sh...\n\n"
-  }
+  [ "$BASH" ] && printf "SHfire works better with a POSIX shell linked to /bin/sh...\n\n"
+  # make shellcheck happy
   cat << 'EOF'
 ###
 SHfire:
   Extremely basic Discord Client in POSIX sh
     - Because, Because? I'm insane?
 Usage:
-  <command outputing text> | ./send <CHANNEL ID>
+  <command outputting text> | ./send <CHANNEL ID>
     - Sends piped data to <CHANNEL ID>
   ./read <CHANNEL ID>
     - Outputs messages in CHANNEL
@@ -105,32 +102,30 @@ Usage:
 ###
 EOF
 }
-auth; [ $(printf '%s\n' "$AUTHKEY" | cut -d' ' -f1 ) = "Bot" ] && { export UA="DiscordBot (SHFIRE)"; } || { export UA="Mozilla/5.0 (X11; Linux x86_64; rv:139.0) Gecko/20100101 Firefox/139.0"; }
-case "$(basename "$0")" in
-  shfire)
+auth; [ "$(printf '%s\n' "$AUTHKEY" | cut -d' ' -f1)" = "Bot" ] && { export UA="DiscordBot (SHFIRE)"; } || { export UA="Mozilla/5.0 (X11; Linux x86_64; rv:139.0) Gecko/20100101 Firefox/139.0"; }
+case "${0##*/}" in
+  "shfire")
     usage; exit 1
   ;;
-  send)
+  "send")
     echo "Sending..."
     send "$1";
   ;;
-  read)
-    #echo "Reading..."
-    # Better to not have this for basefire...
+  "read")
     readCH "$@"
   ;;
-  list|CH|DM)
-    [ "$1" = "CH" -o "$(basename "$0")" = "CH" ] && {
+  "list"|"CH"|"DM")
+    if [ "$1" = "CH" ] || [ "${0##*/}" = "CH" ]; then
       echo "Getting Channels.."
       listCH "${2:-$1}"
       exit 0
-    }
-    [ "$1" = "DM" -o "$(basename "$0")" = "DM" ] && {
+    fi
+    if [ "$1" = "DM" ] || [ "${0##*/}" = "DM" ]; then
       echo "Getting DMs..."
       listDM
       exit 0
-    }
+    fi
     echo "Getting Guilds..." 
     listG
   ;;
-esac; [ "$rtemp" ] 2>/dev/null && { rm "$rtemp"; } 
+esac; [ "$rtemp" ] 2>/dev/null && rm "$rtemp"
